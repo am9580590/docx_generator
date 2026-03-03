@@ -2,132 +2,114 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Генератор документов</title>
-    <!-- Библиотеки для работы с DOCX через CDN -->
-    <script src="https://cdnjs.cloudflare.com"></script>
-<script src="https://cdnjs.cloudflare.com"></script>
-<script src="https://cdnjs.cloudflare.com"></script>
-<script src="https://cdn.jsdelivr.net"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DOCX Generator</title>
+    
+    <!-- Надежные CDN для работы в вебе -->
+    <script src="https://unpkg.com"></script>
+    <script src="https://unpkg.com"></script>
+    <script src="https://unpkg.com"></script>
 
     <style>
-        body { font-family: sans-serif; max-width: 600px; margin: 50px auto; line-height: 1.6; color: #333; }
-        .card { border: 1px solid #ddd; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        .field { margin-bottom: 15px; display: flex; flex-direction: column; }
-        label { font-weight: bold; margin-bottom: 5px; color: #555; }
-        input[type="text"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
-        button { background: #007bff; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; margin-top: 10px; }
-        button:hover { background: #0056b3; }
-        button:disabled { background: #ccc; }
-        #formContainer { margin-top: 20px; }
+        body { font-family: -apple-system, system-ui, sans-serif; background: #f0f2f5; display: flex; justify-content: center; padding: 40px 20px; }
+        .container { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.05); width: 100%; max-width: 500px; }
+        h1 { font-size: 1.5rem; margin-bottom: 20px; color: #1a1a1a; text-align: center; }
+        input[type="file"] { width: 100%; margin-bottom: 20px; padding: 10px; border: 2px dashed #cbd5e0; border-radius: 10px; cursor: pointer; }
+        .field-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: 600; color: #4a5568; font-size: 0.9rem; }
+        input[type="text"] { width: 100%; padding: 10px; border: 1px solid #e2e8f0; border-radius: 8px; box-sizing: border-box; transition: border 0.2s; }
+        input[type="text"]:focus { border-color: #4299e1; outline: none; }
+        #generateBtn { width: 100%; background: #3182ce; color: white; border: none; padding: 14px; border-radius: 10px; font-weight: bold; cursor: pointer; margin-top: 20px; display: none; }
+        #generateBtn:hover { background: #2b6cb0; }
+        .empty-msg { text-align: center; color: #a0aec0; margin-top: 20px; }
     </style>
 </head>
 <body>
 
-<div class="card">
-    <h2>1. Загрузите шаблон (.docx)</h2>
+<div class="container">
+    <h1>Заполнение документа</h1>
+    
+    <label>1. Выберите файл шаблона (.docx)</label>
     <input type="file" id="upload" accept=".docx">
 
     <div id="formContainer">
-        <!-- Здесь появятся поля ввода -->
+        <p class="empty-msg">Загрузите файл, чтобы увидеть поля</p>
     </div>
 
-    <button id="generateBtn" style="display:none;">Скачать готовый документ</button>
+    <button id="generateBtn">Создать и скачать документ</button>
 </div>
 
 <script>
-    let currentZip = null;
+    let zipData = null;
 
-    document.getElementById('upload').addEventListener('change', function(e) {
-        const file = e.target.files[0]; // Берем первый выбранный файл
+    document.getElementById('upload').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
         if (!file) return;
 
         const reader = new FileReader();
-        reader.onload = function(event) {
+        reader.onload = (event) => {
             try {
-                const content = event.target.result;
+                zipData = new window.PizZip(event.target.result);
+                const xmlText = zipData.files["word/document.xml"].asText();
                 
-                // Инициализация PizZip
-                if (typeof window.PizZip === "undefined") {
-                    throw new Error("Библиотека PizZip не загружена. Проверьте интернет-соединение.");
-                }
-                
-                currentZip = new window.PizZip(content);
-                
-                // Читаем текст из XML файла внутри ворда
-                const xmlText = currentZip.files["word/document.xml"].asText();
-                
-                // Регулярка для поиска тегов {переменная}
-                // Находит содержимое между {}, игнорируя XML-теги внутри (например, <w:t>)
+                // Ищем теги {переменная}
                 const regex = /\{([^{}]+)\}/g;
                 const tags = new Set();
                 let match;
-
                 while ((match = regex.exec(xmlText)) !== null) {
-                    // Очистка от XML-тегов, если Word разбил слово внутри скобок
-                    let rawTag = match[1];
-                    let cleanTag = rawTag.replace(/<[^>]+>/g, "").trim();
+                    const cleanTag = match[1].replace(/<[^>]+>/g, "").trim();
                     if (cleanTag) tags.add(cleanTag);
                 }
-
-                renderForm(Array.from(tags));
+                
+                renderFields(Array.from(tags));
             } catch (err) {
-                console.error(err);
-                alert("Ошибка: " + err.message);
+                alert("Ошибка чтения файла. Проверьте формат .docx");
             }
         };
         reader.readAsArrayBuffer(file);
     });
 
-    function renderForm(tags) {
+    function renderFields(tags) {
         const container = document.getElementById('formContainer');
         const btn = document.getElementById('generateBtn');
-        
+        container.innerHTML = "";
+
         if (tags.length === 0) {
-            container.innerHTML = "<p style='color:red;'>Теги вида {переменная} не найдены в документе.</p>";
+            container.innerHTML = "<p class='empty-msg'>В документе не найдено тегов вида {текст}</p>";
             btn.style.display = 'none';
             return;
         }
 
-        container.innerHTML = "<h3>2. Заполните данные</h3>";
         tags.forEach(tag => {
             const div = document.createElement('div');
-            div.className = 'field';
+            div.className = 'field-group';
             div.innerHTML = `
                 <label>${tag}</label>
-                <input type="text" class="user-input" data-tag="${tag}" placeholder="Введите ${tag}...">
+                <input type="text" class="doc-input" data-tag="${tag}">
             `;
             container.appendChild(div);
         });
-
         btn.style.display = 'block';
     }
 
-    document.getElementById('generateBtn').addEventListener('click', function() {
+    document.getElementById('generateBtn').onclick = () => {
         try {
-            const doc = new window.docxtemplater(currentZip, {
-                paragraphLoop: true,
-                linebreaks: true,
-            });
-
-            const inputs = document.querySelectorAll('.user-input');
+            const doc = new window.docxtemplater(zipData, { paragraphLoop: true, linebreaks: true });
             const data = {};
-            inputs.forEach(input => {
-                data[input.getAttribute('data-tag')] = input.value;
+            document.querySelectorAll('.doc-input').forEach(input => {
+                data[input.dataset.tag] = input.value;
             });
 
             doc.render(data);
-
             const out = doc.getZip().generate({
                 type: "blob",
                 mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             });
-            
-            saveAs(out, "filled_document.docx");
+            saveAs(out, "filled_doc.docx");
         } catch (error) {
-            console.error(error);
-            alert("Ошибка при сохранении: " + error.message);
+            alert("Ошибка генерации: " + error.message);
         }
-    });
+    };
 </script>
 
 </body>
