@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Генератор документов</title>
+    <!-- Библиотеки для работы с DOCX через CDN -->
+    <script src="https://cdnjs.cloudflare.com"></script>
+<script src="https://cdnjs.cloudflare.com"></script>
+<script src="https://cdnjs.cloudflare.com"></script>
+<script src="https://cdn.jsdelivr.net"></script>
+
+    <style>
+        body { font-family: sans-serif; max-width: 600px; margin: 50px auto; line-height: 1.6; color: #333; }
+        .card { border: 1px solid #ddd; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        .field { margin-bottom: 15px; display: flex; flex-direction: column; }
+        label { font-weight: bold; margin-bottom: 5px; color: #555; }
+        input[type="text"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        button { background: #007bff; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; margin-top: 10px; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #ccc; }
+        #formContainer { margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>1. Загрузите шаблон (.docx)</h2>
+    <input type="file" id="upload" accept=".docx">
+
+    <div id="formContainer">
+        <!-- Здесь появятся поля ввода -->
+    </div>
+
+    <button id="generateBtn" style="display:none;">Скачать готовый документ</button>
+</div>
+
+<script>
+    let currentZip = null;
+
+    document.getElementById('upload').addEventListener('change', function(e) {
+        const file = e.target.files[0]; // Берем первый выбранный файл
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            try {
+                const content = event.target.result;
+                
+                // Инициализация PizZip
+                if (typeof window.PizZip === "undefined") {
+                    throw new Error("Библиотека PizZip не загружена. Проверьте интернет-соединение.");
+                }
+                
+                currentZip = new window.PizZip(content);
+                
+                // Читаем текст из XML файла внутри ворда
+                const xmlText = currentZip.files["word/document.xml"].asText();
+                
+                // Регулярка для поиска тегов {переменная}
+                // Находит содержимое между {}, игнорируя XML-теги внутри (например, <w:t>)
+                const regex = /\{([^{}]+)\}/g;
+                const tags = new Set();
+                let match;
+
+                while ((match = regex.exec(xmlText)) !== null) {
+                    // Очистка от XML-тегов, если Word разбил слово внутри скобок
+                    let rawTag = match[1];
+                    let cleanTag = rawTag.replace(/<[^>]+>/g, "").trim();
+                    if (cleanTag) tags.add(cleanTag);
+                }
+
+                renderForm(Array.from(tags));
+            } catch (err) {
+                console.error(err);
+                alert("Ошибка: " + err.message);
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    });
+
+    function renderForm(tags) {
+        const container = document.getElementById('formContainer');
+        const btn = document.getElementById('generateBtn');
+        
+        if (tags.length === 0) {
+            container.innerHTML = "<p style='color:red;'>Теги вида {переменная} не найдены в документе.</p>";
+            btn.style.display = 'none';
+            return;
+        }
+
+        container.innerHTML = "<h3>2. Заполните данные</h3>";
+        tags.forEach(tag => {
+            const div = document.createElement('div');
+            div.className = 'field';
+            div.innerHTML = `
+                <label>${tag}</label>
+                <input type="text" class="user-input" data-tag="${tag}" placeholder="Введите ${tag}...">
+            `;
+            container.appendChild(div);
+        });
+
+        btn.style.display = 'block';
+    }
+
+    document.getElementById('generateBtn').addEventListener('click', function() {
+        try {
+            const doc = new window.docxtemplater(currentZip, {
+                paragraphLoop: true,
+                linebreaks: true,
+            });
+
+            const inputs = document.querySelectorAll('.user-input');
+            const data = {};
+            inputs.forEach(input => {
+                data[input.getAttribute('data-tag')] = input.value;
+            });
+
+            doc.render(data);
+
+            const out = doc.getZip().generate({
+                type: "blob",
+                mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            });
+            
+            saveAs(out, "filled_document.docx");
+        } catch (error) {
+            console.error(error);
+            alert("Ошибка при сохранении: " + error.message);
+        }
+    });
+</script>
+
+</body>
+</html>
