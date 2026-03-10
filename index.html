@@ -59,18 +59,34 @@
         if (!e.target.files[0]) return;
         const reader = new FileReader();
         reader.onload = function(ev) {
-            try {
-                zipFile = new window.PizZip(ev.target.result);
-                const xml = zipFile.files["word/document.xml"].asText();
-                const tags = new Set();
-                let match, regex = /\{([^{}]+)\}/g;
-                while ((match = regex.exec(xml)) !== null) {
-                    let clean = match[1].replace(/<[^>]+>/g, "").trim();
-                    if (clean) tags.add(clean);
-                }
-                render(Array.from(tags));
-            } catch (err) { alert("Format Error"); }
-        };
+    try {
+        zipFile = new window.PizZip(ev.target.result);
+        const xml = zipFile.files["word/document.xml"].asText();
+        const tags = new Set();
+        let match;
+        const regex = /\{([^{}]+)\}/g;
+
+        // Фильтр для системных кодов (GUID): 8-4-4-4-12 символов
+        const guidRegex = /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/;
+
+        while ((match = regex.exec(xml)) !== null) {
+            // 1. Очищаем содержимое скобок от XML-тегов (бывает при форматировании в Word)
+            let clean = match[1].replace(/<[^>]+>/g, "").trim();
+            
+            // 2. ПРОВЕРЯЕМ: 
+            // - Тег не пустой
+            // - Это НЕ системный GUID (тот самый длинный код с тире)
+            // - В теге нет странных символов (например, только латиница+цифры+тире часто признак системы)
+            if (clean && !guidRegex.test(clean)) {
+                tags.add(clean);
+            }
+        }
+        render(Array.from(tags));
+    } catch (err) { 
+        alert("Помилка читання файлу. Перевірте формат .docx"); 
+    }
+};
+
         reader.readAsArrayBuffer(e.target.files[0]);
     };
 
