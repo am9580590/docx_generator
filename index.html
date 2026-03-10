@@ -6,18 +6,30 @@
     <title>Doc Editor</title>
     
     <script src="https://unpkg.com/pizzip/dist/pizzip.min.js"></script>
-<script src="https://unpkg.com/pizzip/dist/pizzip-utils.min.js"></script>
-
-<script src="https://unpkg.com/docxtemplater/build/docxtemplater.min.js"></script>
-
-<script src="https://unpkg.com/file-saver/dist/FileSaver.min.js"></script>
+    <script src="https://unpkg.com/pizzip/dist/pizzip-utils.min.js"></script>
+    <script src="https://unpkg.com/docxtemplater/build/docxtemplater.min.js"></script>
+    <script src="https://unpkg.com/file-saver/dist/FileSaver.min.js"></script>
 
     <style>
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background: #fff; color: #000; }
         
         .container { max-width: 500px; margin: 0 auto; }
-        h2 { font-size: 1.2rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 30px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+        
+        /* Шапка с кнопкой блокнота */
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #000; margin-bottom: 30px; padding-bottom: 10px; }
+        h2 { font-size: 1.2rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin: 0; border: none; }
+        
+        .notes-toggle { background: #000; color: #fff; border: none; padding: 8px 15px; font-size: 11px; font-weight: 700; text-transform: uppercase; cursor: pointer; }
+
+        /* Панель блокнота */
+        .notes-panel { position: fixed; top: 0; right: -100%; width: 85%; max-width: 400px; height: 100%; background: #fff; border-left: 2px solid #000; z-index: 1000; transition: 0.3s; padding: 20px; display: flex; flex-direction: column; }
+        .notes-panel.open { right: 0; }
+        #notepad { flex: 1; width: 100%; border: 1px solid #000; padding: 10px; font-size: 15px; resize: none; font-family: inherit; }
+        .notes-close { margin-top: 15px; background: #000; color: #fff; border: none; padding: 15px; cursor: pointer; font-weight: 700; text-transform: uppercase; }
+        
+        .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 999; display: none; }
+        .overlay.active { display: block; }
 
         .upload-wrapper { margin-bottom: 30px; position: relative; }
         input[type="file"] { width: 100%; padding: 15px 0; border: none; font-size: 14px; cursor: pointer; }
@@ -41,8 +53,18 @@
 </head>
 <body>
 
+<div class="overlay" id="overlay" onclick="toggleNotes()"></div>
+<div class="notes-panel" id="notesPanel">
+    <h3 style="font-size: 14px; text-transform: uppercase; margin-top: 0;">Блокнот</h3>
+    <textarea id="notepad" placeholder="Данные для копирования..."></textarea>
+    <button class="notes-close" onclick="toggleNotes()">Закрыть</button>
+</div>
+
 <div class="container">
-    <h2>Document Generator</h2>
+    <div class="header">
+        <h2>Document Generator</h2>
+        <button class="notes-toggle" onclick="toggleNotes()">Notes</button>
+    </div>
     
     <div class="upload-wrapper">
         <input type="file" id="upload" accept=".docx">
@@ -55,103 +77,108 @@
 <script>
     let zipFile = null;
 
+    // --- БЛОКНОТ И СЕССИЯ ---
+    function toggleNotes() {
+        document.getElementById('notesPanel').classList.toggle('open');
+        document.getElementById('overlay').classList.toggle('active');
+    }
+
+    document.getElementById('notepad').oninput = (e) => {
+        localStorage.setItem('doc_notes', e.target.value);
+    };
+
+    function saveSession() {
+        const data = {};
+        document.querySelectorAll('.val').forEach(i => { data[i.dataset.tag] = i.value; });
+        localStorage.setItem('doc_session', JSON.stringify(data));
+    }
+
+    function loadSession() {
+        const saved = localStorage.getItem('doc_session');
+        if (saved) {
+            const data = JSON.parse(saved);
+            document.querySelectorAll('.val').forEach(i => {
+                if (data[i.dataset.tag]) i.value = data[i.dataset.tag];
+            });
+        }
+        document.getElementById('notepad').value = localStorage.getItem('doc_notes') || "";
+    }
+
+    function clearSession() {
+        localStorage.removeItem('doc_session');
+        document.querySelectorAll('.val').forEach(i => i.value = "");
+    }
+
+    // --- ВАША ОРИГИНАЛЬНАЯ ЛОГИКА ФАЙЛА ---
     document.getElementById('upload').onchange = function(e) {
         if (!e.target.files[0]) return;
+        clearSession();
         const reader = new FileReader();
         reader.onload = function(ev) {
-    try {
-        zipFile = new window.PizZip(ev.target.result);
-        const xml = zipFile.files["word/document.xml"].asText();
-        const tags = new Set();
-        let match;
-        const regex = /\{([^{}]+)\}/g;
+            try {
+                zipFile = new window.PizZip(ev.target.result);
+                const xml = zipFile.files["word/document.xml"].asText();
+                const tags = new Set();
+                let match;
+                const regex = /\{([^{}]+)\}/g;
+                const guidRegex = /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/;
 
-        // Фильтр для системных кодов (GUID): 8-4-4-4-12 символов
-        const guidRegex = /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/;
-
-        while ((match = regex.exec(xml)) !== null) {
-            // 1. Очищаем содержимое скобок от XML-тегов (бывает при форматировании в Word)
-            let clean = match[1].replace(/<[^>]+>/g, "").trim();
-            
-            // 2. ПРОВЕРЯЕМ: 
-            // - Тег не пустой
-            // - Это НЕ системный GUID (тот самый длинный код с тире)
-            // - В теге нет странных символов (например, только латиница+цифры+тире часто признак системы)
-            if (clean && !guidRegex.test(clean)) {
-                tags.add(clean);
+                while ((match = regex.exec(xml)) !== null) {
+                    let clean = match[1].replace(/<[^>]+>/g, "").trim();
+                    if (clean && !guidRegex.test(clean)) {
+                        tags.add(clean);
+                    }
+                }
+                render(Array.from(tags));
+            } catch (err) { 
+                alert("Помилка читання файлу. Перевірте формат .docx"); 
             }
-        }
-        render(Array.from(tags));
-    } catch (err) { 
-        alert("Помилка читання файлу. Перевірте формат .docx"); 
-    }
-};
-
+        };
         reader.readAsArrayBuffer(e.target.files[0]);
     };
 
     function render(tags) {
         const cont = document.getElementById('form');
-        cont.innerHTML = tags.map(t => `
+        cont.innerHTML = tags.map((t, idx) => `
             <div class="field">
                 <label>${t}</label>
                 <div class="input-wrapper">
-                    <textarea class="val" data-tag="${t}" id="txt-${t}"></textarea>
-                    <button class="voice-btn" onclick="runVoice('txt-${t}', this)">
-                        <svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+                    <textarea class="val" data-tag="${t}" id="txt-${idx}" oninput="saveSession()"></textarea>
+                    <button class="voice-btn" onclick="runVoice('txt-${idx}', this)">
+                        <svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z""")/>><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z""")/>></svg>
                     </button>
                 </div>
             </div>
         `).join('');
         document.getElementById('saveBtn').style.display = tags.length ? 'block' : 'none';
+        loadSession();
     }
 
-let recognition = null; // Глобальный объект записи
+    let recognition = null;
 
-function runVoice(id, btn) {
-    const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Speech) return alert("Не поддерживается");
-
-    // Если запись уже идет — останавливаем её
-    if (btn.classList.contains('recording')) {
-        recognition.stop();
-        return;
+    function runVoice(id, btn) {
+        const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!Speech) return alert("Не поддерживается");
+        if (btn.classList.contains('recording')) {
+            recognition.stop();
+            return;
+        }
+        recognition = new Speech();
+        recognition.lang = 'uk-UA';
+        recognition.continuous = true;
+        recognition.interimResults = false;
+        recognition.onstart = () => btn.classList.add('recording');
+        recognition.onend = () => btn.classList.remove('recording');
+        recognition.onresult = (e) => {
+            const el = document.getElementById(id);
+            const transcript = e.results[e.results.length - 1][0].transcript;
+            el.value += (el.value ? " " : "") + transcript;
+            el.scrollTop = el.scrollHeight;
+            saveSession();
+        };
+        recognition.onerror = () => recognition.stop();
+        recognition.start();
     }
-
-    // Если запись не идет — создаем и запускаем
-    recognition = new Speech();
-    recognition.lang = 'uk-UA';
-    recognition.continuous = true; // НЕ ВЫКЛЮЧАТЬ при паузах
-    recognition.interimResults = false;
-
-    recognition.onstart = () => {
-        btn.classList.add('recording');
-    };
-
-    recognition.onend = () => {
-        btn.classList.remove('recording');
-    };
-
-    recognition.onresult = (e) => {
-        const el = document.getElementById(id);
-        // Берем только последний распознанный фрагмент
-        const lastResultIndex = e.results.length - 1;
-        const transcript = e.results[lastResultIndex][0].transcript;
-        
-        el.value += (el.value ? " " : "") + transcript;
-        
-        // Автоматическая прокрутка вниз, если текста много
-        el.scrollTop = el.scrollHeight;
-    };
-
-    recognition.onerror = (err) => {
-        console.error(err);
-        recognition.stop();
-    };
-
-    recognition.start();
-}
-
 
     document.getElementById('saveBtn').onclick = function() {
         try {
@@ -161,7 +188,12 @@ function runVoice(id, btn) {
             doc.render(data);
             const out = doc.getZip().generate({type:"blob", mimeType:"application/vnd.openxmlformats-officedocument.wordprocessingml.document"});
             saveAs(out, "document_filled.docx");
+            clearSession();
         } catch (e) { alert("Error"); }
+    };
+
+    window.onload = () => {
+        document.getElementById('notepad').value = localStorage.getItem('doc_notes') || "";
     };
 </script>
 </body>
